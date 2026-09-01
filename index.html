@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Line Sketcher — draws any image, stroke by stroke</title>
+<style>
+  :root{
+    --paper:#f6f5f1;
+    --ink:#17171a;
+    --charcoal:#4a4a52;
+    --line:#d8d6cf;
+    --accent:#b5322a;
+    --panel:#1c1c1f;
+    --panel-text:#e8e6df;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--panel);
+    color:var(--panel-text);
+    font-family:'Segoe UI', Helvetica, Arial, sans-serif;
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    padding:32px 16px 64px;
+  }
+  header{
+    max-width:640px;
+    text-align:left;
+    width:100%;
+    margin-bottom:20px;
+  }
+  h1{
+    font-size:1.5rem;
+    font-weight:600;
+    margin:0 0 6px;
+    letter-spacing:-0.01em;
+  }
+  p.sub{
+    color:#a6a49c;
+    margin:0;
+    font-size:0.95rem;
+    line-height:1.5;
+    max-width:56ch;
+  }
+  .stage{
+    background:var(--paper);
+    border-radius:2px;
+    box-shadow:0 20px 60px rgba(0,0,0,0.35);
+    padding:0;
+    display:inline-block;
+    line-height:0;
+  }
+  canvas{
+    display:block;
+    max-width:88vw;
+    height:auto;
+    background:var(--paper);
+  }
+  .toolbar{
+    width:100%;
+    max-width:640px;
+    margin-top:18px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    align-items:center;
+  }
+  button, label.filebtn{
+    background:transparent;
+    border:1px solid #3a3a40;
+    color:var(--panel-text);
+    padding:8px 16px;
+    border-radius:2px;
+    font-size:0.85rem;
+    cursor:pointer;
+    transition:border-color 0.15s ease, color 0.15s ease;
+  }
+  button:hover, label.filebtn:hover{
+    border-color:var(--accent);
+    color:#fff;
+  }
+  button.primary{
+    background:var(--accent);
+    border-color:var(--accent);
+    color:#fff;
+    font-weight:600;
+  }
+  button.primary:hover{
+    filter:brightness(1.08);
+  }
+  button:disabled{
+    opacity:0.4;
+    cursor:default;
+  }
+  input[type=file]{display:none;}
+  .field{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    color:#a6a49c;
+    font-size:0.82rem;
+  }
+  input[type=range]{width:110px;}
+  .status{
+    width:100%;
+    max-width:640px;
+    margin-top:10px;
+    font-size:0.8rem;
+    color:#7a786f;
+    min-height:1.2em;
+  }
+  footer{
+    max-width:640px;
+    margin-top:36px;
+    font-size:0.78rem;
+    color:#605e57;
+    line-height:1.6;
+  }
+  footer a{color:#9a978c;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Line Sketcher</h1>
+  <p class="sub">Traces the outline of any image and redraws it stroke by stroke, like a pen plotter. Runs entirely in the browser — no server, no upload.</p>
+</header>
+
+<div class="stage">
+  <canvas id="canvas" width="700" height="700"></canvas>
+</div>
+
+<div class="toolbar">
+  <label class="filebtn">
+    Choose image
+    <input type="file" id="fileInput" accept="image/*">
+  </label>
+  <button id="drawBtn" class="primary">Draw</button>
+  <button id="resetBtn">Reset</button>
+  <div class="field">
+    Threshold
+    <input type="range" id="thresh" min="40" max="240" value="180">
+  </div>
+  <div class="field">
+    Speed
+    <input type="range" id="speed" min="1" max="40" value="8">
+  </div>
+</div>
+
+<div class="status" id="status">Loading default image…</div>
+
+<footer>
+  Default image: spiderman.png (in this folder). Swap it for any picture — plain
+  backgrounds and clear subjects trace best.
+</footer>
+
+<script>
+(function(){
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const statusEl = document.getElementById('status');
+  const threshInput = document.getElementById('thresh');
+  const speedInput = document.getElementById('speed');
+  const drawBtn = document.getElementById('drawBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const fileInput = document.getElementById('fileInput');
+
+  const TARGET_HEIGHT = 700;
+  let currentImage = null;
+  let animHandle = null;
+
+  function setStatus(msg){ statusEl.textContent = msg; }
+
+  function loadImage(src, isObjectUrl){
+    const img = new Image();
+    img.onload = function(){
+      currentImage = img;
+      drawPreview(img);
+      setStatus('Image loaded. Click "Draw" to start.');
+      if(isObjectUrl) URL.revokeObjectURL(src);
+    };
+    img.onerror = function(){
+      setStatus('Could not load that image.');
+    };
+    img.src = src;
+  }
+
+  function fitCanvasToImage(img){
+    const ratio = TARGET_HEIGHT / img.height;
+    const w = Math.round(img.width * ratio);
+    const h = TARGET_HEIGHT;
+    canvas.width = w;
+    canvas.height = h;
+    return {w, h};
+  }
+
+  function drawPreview(img){
+    const {w, h} = fitCanvasToImage(img);
+    ctx.fillStyle = '#f6f5f1';
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalAlpha = 0.18;
+    ctx.drawImage(img, 0, 0, w, h);
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------- image -> binary grid ----------
+  function toBinaryGrid(img, w, h, threshold){
+    const off = document.createElement('canvas');
+    off.width = w; off.height = h;
+    const octx = off.getContext('2d');
+    octx.drawImage(img, 0, 0, w, h);
+    const data = octx.getImageData(0, 0, w, h).data;
+    const grid = new Uint8Array(w * h);
+    for(let i = 0, p = 0; i < data.length; i += 4, p++){
+      const r = data[i], g = data[i+1], b = data[i+2];
+      const gray = 0.299*r + 0.587*g + 0.114*b;
+      grid[p] = gray < threshold ? 1 : 0; // dark pixels are foreground
+    }
+    return grid;
+  }
+
+  // ---------- connected components + boundary tracing ----------
+  function isFG(grid, w, h, x, y){
+    if(x < 0 || y < 0 || x >= w || y >= h) return false;
+    return grid[y*w + x] === 1;
+  }
+
+  const DIRS = [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
+  function dirIndex(dx, dy){
+    for(let i = 0; i < 8; i++) if(DIRS[i][0] === dx && DIRS[i][1] === dy) return i;
+    return 6; // default west
+  }
+
+  function traceContour(grid, w, h, sx, sy){
+    const boundary = [[sx, sy]];
+    let current = [sx, sy];
+    let cameFrom = [sx - 1, sy];
+    const maxIter = w * h * 4 + 64;
+    let count = 0;
+    while(count++ < maxIter){
+      const startIdx = dirIndex(cameFrom[0]-current[0], cameFrom[1]-current[1]);
+      let found = null, prevBg = null;
+      for(let k = 1; k <= 8; k++){
+        const idx = (startIdx + k) % 8;
+        const nx = current[0] + DIRS[idx][0], ny = current[1] + DIRS[idx][1];
+        if(isFG(grid, w, h, nx, ny)){
+          found = [nx, ny];
+          const pIdx = (startIdx + k - 1) % 8;
+          prevBg = [current[0] + DIRS[pIdx][0], current[1] + DIRS[pIdx][1]];
+          break;
+        }
+      }
+      if(!found) break;
+      boundary.push(found);
+      cameFrom = prevBg;
+      current = found;
+      if(found[0] === sx && found[1] === sy && boundary.length > 3) break;
+    }
+    return boundary;
+  }
+
+  function findContours(grid, w, h, minArea){
+    const visited = new Uint8Array(w * h);
+    const contours = [];
+    const stackX = new Int32Array(w * h);
+    const stackY = new Int32Array(w * h);
+
+    for(let y = 0; y < h; y++){
+      for(let x = 0; x < w; x++){
+        const p = y*w + x;
+        if(grid[p] !== 1 || visited[p]) continue;
+
+        // flood fill to mark the whole component visited & measure area
+        let sp = 0;
+        stackX[sp] = x; stackY[sp] = y; sp++;
+        visited[p] = 1;
+        let area = 0;
+        while(sp > 0){
+          sp--;
+          const cx = stackX[sp], cy = stackY[sp];
+          area++;
+          const neighbors4 = [[1,0],[-1,0],[0,1],[0,-1]];
+          for(const [dx, dy] of neighbors4){
+            const nx = cx+dx, ny = cy+dy;
+            if(nx<0||ny<0||nx>=w||ny>=h) continue;
+            const np = ny*w+nx;
+            if(grid[np]===1 && !visited[np]){
+              visited[np]=1;
+              stackX[sp]=nx; stackY[sp]=ny; sp++;
+            }
+          }
+        }
+
+        if(area >= minArea){
+          const contour = traceContour(grid, w, h, x, y);
+          if(contour.length > 4) contours.push({points: contour, area});
+        }
+      }
+    }
+    contours.sort((a,b) => b.area - a.area);
+    return contours;
+  }
+
+  // ---------- animation ----------
+  function animateContours(contours, pointsPerFrame){
+    let ci = 0, pi = 1;
+    ctx.strokeStyle = '#17171a';
+    ctx.fillStyle = '#17171a';
+    ctx.lineWidth = 1;
+    ctx.lineJoin = 'round';
+
+    function step(){
+      if(ci >= contours.length){
+        setStatus('Done — ' + contours.length + ' shapes drawn.');
+        drawBtn.disabled = false;
+        return;
+      }
+      const pts = contours[ci].points;
+      if(pi === 1){
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+      }
+      const end = Math.min(pi + pointsPerFrame, pts.length);
+      for(; pi < end; pi++){
+        ctx.lineTo(pts[pi][0], pts[pi][1]);
+      }
+      ctx.stroke();
+
+      if(pi >= pts.length){
+        const path = new Path2D();
+        path.moveTo(pts[0][0], pts[0][1]);
+        for(let k=1;k<pts.length;k++) path.lineTo(pts[k][0], pts[k][1]);
+        path.closePath();
+        ctx.fill(path);
+        ci++; pi = 1;
+      }
+      setStatus('Drawing shape ' + (ci+1) + ' of ' + contours.length + '…');
+      animHandle = requestAnimationFrame(step);
+    }
+    animHandle = requestAnimationFrame(step);
+  }
+
+  function startDraw(){
+    if(!currentImage){ setStatus('Choose an image first.'); return; }
+    if(animHandle) cancelAnimationFrame(animHandle);
+    drawBtn.disabled = true;
+
+    const {w, h} = fitCanvasToImage(currentImage);
+    ctx.fillStyle = '#f6f5f1';
+    ctx.fillRect(0, 0, w, h);
+
+    setStatus('Analyzing image…');
+    // let the "Analyzing" status paint before the heavy sync work
+    requestAnimationFrame(() => {
+      const threshold = parseInt(threshInput.value, 10);
+      const grid = toBinaryGrid(currentImage, w, h, threshold);
+      const minArea = Math.max(15, Math.round((w*h) * 0.00005));
+      const contours = findContours(grid, w, h, minArea);
+      if(contours.length === 0){
+        setStatus('No shapes found — try adjusting the threshold.');
+        drawBtn.disabled = false;
+        return;
+      }
+      const speed = parseInt(speedInput.value, 10);
+      animateContours(contours, speed);
+    });
+  }
+
+  drawBtn.addEventListener('click', startDraw);
+  resetBtn.addEventListener('click', function(){
+    if(animHandle) cancelAnimationFrame(animHandle);
+    drawBtn.disabled = false;
+    if(currentImage) drawPreview(currentImage);
+  });
+  fileInput.addEventListener('change', function(e){
+    const file = e.target.files[0];
+    if(!file) return;
+    const url = URL.createObjectURL(file);
+    loadImage(url, true);
+  });
+
+  loadImage('spiderman.png', false);
+})();
+</script>
+</body>
+</html>
