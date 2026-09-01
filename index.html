@@ -48,19 +48,20 @@
     max-width:56ch;
   }
   .stage{
-    background:var(--paper);
-    border-radius:2px;
+    background:transparent;
+    border-radius:8px;
     box-shadow:0 20px 60px rgba(0,0,0,0.35);
     padding:0;
     display:inline-block;
     line-height:0;
-  }
+    overflow:hidden;
+ }
   canvas{
     display:block;
-    max-width:88vw;
+    max-width:92vw;
     height:auto;
-    background:var(--paper);
-  }
+    background:transparent;
+ }
   .toolbar{
     width:100%;
     max-width:640px;
@@ -170,7 +171,7 @@
   const resetBtn = document.getElementById('resetBtn');
   const fileInput = document.getElementById('fileInput');
 
-  const TARGET_HEIGHT = 700;
+  const TARGET_HEIGHT = 820;
   let currentImage = null;
   let animHandle = null;
 
@@ -201,12 +202,13 @@
 
   function drawPreview(img){
     const {w, h} = fitCanvasToImage(img);
-    ctx.fillStyle = '#f6f5f1';
-    ctx.fillRect(0, 0, w, h);
+
+    ctx.clearRect(0, 0, w, h);
+
     ctx.globalAlpha = 0.18;
     ctx.drawImage(img, 0, 0, w, h);
     ctx.globalAlpha = 1;
-  }
+}
 
   // ---------- image -> binary grid ----------
   function toBinaryGrid(img, w, h, threshold){
@@ -309,8 +311,8 @@
   // ---------- animation ----------
   function animateContours(contours, pointsPerFrame){
     let ci = 0, pi = 1;
-    ctx.strokeStyle = '#17171a';
-    ctx.fillStyle = '#17171a';
+    ctx.strokeStyle = '#ffffff';
+    ctx.fillStyle = '#ffffff';
     ctx.lineWidth = 1;
     ctx.lineJoin = 'round';
 
@@ -351,8 +353,7 @@
     drawBtn.disabled = true;
 
     const {w, h} = fitCanvasToImage(currentImage);
-    ctx.fillStyle = '#f6f5f1';
-    ctx.fillRect(0, 0, w, h);
+ctx.clearRect(0, 0, w, h);
 
     setStatus('Analyzing image…');
     // let the "Analyzing" status paint before the heavy sync work
